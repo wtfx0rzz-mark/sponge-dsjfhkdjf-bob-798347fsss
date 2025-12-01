@@ -102,19 +102,12 @@ return function(C, R, UI)
     -- Infinite Jump
     ------------------------------------------------------------------------
 
+    -- default ON unless explicitly saved false
     local infJumpOn  = (C.State.Toggles.InfiniteJump ~= false)
     local infJumpCon = nil
 
-    local function enableInfiniteJump()
-        if infJumpOn then return end
-        infJumpOn = true
-        C.State.Toggles.InfiniteJump = true
-
-        if infJumpCon then
-            infJumpCon:Disconnect()
-            infJumpCon = nil
-        end
-
+    local function ensureJumpConnection()
+        if infJumpCon then return end
         infJumpCon = UIS.JumpRequest:Connect(function()
             if not infJumpOn then return end
             local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
@@ -126,20 +119,30 @@ return function(C, R, UI)
         end)
     end
 
+    local function enableInfiniteJump()
+        infJumpOn = true
+        C.State.Toggles.InfiniteJump = true
+        ensureJumpConnection()
+    end
+
     local function disableInfiniteJump()
         infJumpOn = false
         C.State.Toggles.InfiniteJump = false
-        if infJumpCon then
-            infJumpCon:Disconnect()
-            infJumpCon = nil
-        end
+        -- keep the connection; it is gated by infJumpOn
     end
+
+    -- Make sure the JumpRequest connection exists from the start
+    ensureJumpConnection()
 
     tab:Toggle({
         Title   = "Infinite Jump",
         Value   = infJumpOn,
         Callback = function(on)
-            if on then enableInfiniteJump() else disableInfiniteJump() end
+            if on then
+                enableInfiniteJump()
+            else
+                disableInfiniteJump()
+            end
         end
     })
 
@@ -717,7 +720,7 @@ return function(C, R, UI)
             end
 
             if infJumpOn and not infJumpCon then
-                enableInfiniteJump()
+                ensureJumpConnection()
             end
 
             if flyEnabled and not FLYING then
