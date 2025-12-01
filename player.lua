@@ -44,7 +44,7 @@ return function(C, R, UI)
     -- Movement: WalkSpeed / JumpPower
     ------------------------------------------------------------------------
 
-    local DEFAULT_SPEED     = 16
+    local DEFAULT_SPEED     = 70
     local DEFAULT_JUMPPOWER = 50
 
     local function applyMovementConfig()
@@ -102,7 +102,7 @@ return function(C, R, UI)
     -- Infinite Jump
     ------------------------------------------------------------------------
 
-    local infJumpOn  = C.State.Toggles.InfiniteJump or false
+    local infJumpOn  = (C.State.Toggles.InfiniteJump ~= false)
     local infJumpCon = nil
 
     local function enableInfiniteJump()
@@ -417,7 +417,7 @@ return function(C, R, UI)
             local n = tonumber(type(v) == "table" and (v.Value or v.Current or v.Default) or v)
             if not n then return end
             n = math.clamp(n, 20, 200)
-            flySpeed        = n
+            flySpeed          = n
             C.Config.FlySpeed = n
         end
     })
