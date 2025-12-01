@@ -227,6 +227,243 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------
+    -- Base Timers (world billboards for bases)
+    --------------------------------------------------
+    local BASES_FOLDER_NAME = "PlayerBases"
+    local BASE_MODEL_PREFIX = "^PlayerBaseTemplate_"
+    local BASE_LABEL_OFFSET = Vector3.new(0, 4.5, 0)
+
+    -- master visibility toggle (persistent)
+    local baseTimersVisible = (toggles.BaseTimers == true)
+
+    local function safeAttrs(inst)
+        local ok, at = pcall(function()
+            return inst:GetAttributes()
+        end)
+        return ok and at or {}
+    end
+
+    local function getAttr(inst, key)
+        local at = safeAttrs(inst)
+        return at and at[key]
+    end
+
+    local function chooseBaseAnchor(model)
+        local perm = model:FindFirstChild("_PERMANENT")
+        if perm then
+            local door = perm:FindFirstChild("BaseEntrance")
+            if door and door:IsA("BasePart") then
+                return door
+            end
+        end
+        if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then
+            return model.PrimaryPart
+        end
+        return model:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function computeLockState(model)
+        local locked    = getAttr(model, "Locked")
+        local unlockTs  = tonumber(getAttr(model, "UnlockTimestamp"))
+        local lockDur   = tonumber(getAttr(model, "LockDuration"))
+        local now       = os.time()
+
+        if unlockTs and unlockTs > now then
+            return true, math.max(0, unlockTs - now)
+        end
+
+        if locked == true then
+            return true, math.max(0, lockDur or 0)
+        end
+
+        return false, 0
+    end
+
+    local function mmss(sec)
+        sec = math.max(0, math.floor(sec or 0))
+        local m = math.floor(sec / 60)
+        local s = sec % 60
+        return string.format("%d:%02d", m, s)
+    end
+
+    local baseUI    = {}  -- [model] = { gui, title, timer, anchor, model }
+    local basesList = {}  -- array of base models
+
+    local myBaseModel  = nil
+    local lockedMyBase = false
+
+    local function makeBaseBillboard(anchor)
+        local gui = Instance.new("BillboardGui")
+        gui.Name = "BaseLockLabel"
+        gui.Adornee = anchor
+        gui.AlwaysOnTop = true
+        gui.Size = UDim2.fromOffset(160, 40)
+        gui.MaxDistance = 1e9
+        gui.StudsOffsetWorldSpace = BASE_LABEL_OFFSET
+        gui.Parent = lp:WaitForChild("PlayerGui")
+        gui.Enabled = baseTimersVisible
+
+        local holder = Instance.new("Frame")
+        holder.BackgroundTransparency = 1
+        holder.Size = UDim2.fromScale(1, 1)
+        holder.Parent = gui
+
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.BackgroundTransparency = 1
+        title.Font = Enum.Font.GothamBold
+        title.TextScaled = true
+        title.Size = UDim2.new(1, 0, 0.5, 0)
+        title.Position = UDim2.new(0, 0, 0, 0)
+        title.Text = "…"
+        title.TextColor3 = Color3.new(1, 1, 1)
+        title.Parent = holder
+
+        local timer = Instance.new("TextLabel")
+        timer.Name = "Timer"
+        timer.BackgroundTransparency = 1
+        timer.Font = Enum.Font.GothamBold
+        timer.TextScaled = true
+        timer.Size = UDim2.new(1, 0, 0.5, 0)
+        timer.Position = UDim2.new(0, 0, 0.5, 0)
+        timer.Text = ""
+        timer.TextColor3 = Color3.new(1, 1, 1)
+        timer.Parent = holder
+
+        return gui, title, timer
+    end
+
+    local function updateBaseBillboardVisibility()
+        for _, entry in pairs(baseUI) do
+            if entry.gui then
+                entry.gui.Enabled = baseTimersVisible
+            end
+        end
+    end
+
+    local function createBaseUI(model)
+        if baseUI[model] then
+            return
+        end
+        local anchor = chooseBaseAnchor(model)
+        if not anchor then
+            return
+        end
+        local gui, title, timer = makeBaseBillboard(anchor)
+        baseUI[model] = {
+            gui    = gui,
+            title  = title,
+            timer  = timer,
+            anchor = anchor,
+            model  = model,
+        }
+    end
+
+    local function addExistingBasesOnce()
+        local folder = WS:FindFirstChild(BASES_FOLDER_NAME)
+        if not folder then
+            return
+        end
+        for _, child in ipairs(folder:GetChildren()) do
+            if child:IsA("Model") and child.Name:match(BASE_MODEL_PREFIX) then
+                createBaseUI(child)
+                table.insert(basesList, child)
+            end
+        end
+    end
+
+    addExistingBasesOnce()
+
+    local function trySelectMyBaseOnce(char)
+        if lockedMyBase or myBaseModel then
+            return
+        end
+
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+            or char:WaitForChild("HumanoidRootPart", 5)
+        if not hrp then
+            return
+        end
+
+        local t0 = time()
+        while #basesList == 0 and time() - t0 < 3.0 do
+            addExistingBasesOnce()
+            task.wait(0.1)
+        end
+        if #basesList == 0 then
+            return
+        end
+
+        local nearest, bestD = nil, math.huge
+        for _, m in ipairs(basesList) do
+            local anchor = chooseBaseAnchor(m)
+            if anchor then
+                local d = (anchor.Position - hrp.Position).Magnitude
+                if d < bestD then
+                    nearest, bestD = m, d
+                end
+            end
+        end
+
+        myBaseModel  = nearest
+        lockedMyBase = myBaseModel ~= nil
+    end
+
+    local basesFolder = WS:FindFirstChild(BASES_FOLDER_NAME)
+    if basesFolder then
+        basesFolder.ChildAdded:Connect(function(child)
+            if child:IsA("Model") and child.Name:match(BASE_MODEL_PREFIX) then
+                createBaseUI(child)
+                table.insert(basesList, child)
+                if lp.Character then
+                    trySelectMyBaseOnce(lp.Character)
+                end
+            end
+        end)
+    else
+        WS.ChildAdded:Connect(function(child)
+            if child.Name == BASES_FOLDER_NAME then
+                basesFolder = child
+                child.ChildAdded:Connect(function(grand)
+                    if grand:IsA("Model") and grand.Name:match(BASE_MODEL_PREFIX) then
+                        createBaseUI(grand)
+                        table.insert(basesList, grand)
+                        if lp.Character then
+                            trySelectMyBaseOnce(lp.Character)
+                        end
+                    end
+                end)
+            end
+        end)
+    end
+
+    task.spawn(function()
+        while true do
+            for _, entry in pairs(baseUI) do
+                if entry.anchor and entry.anchor:IsDescendantOf(WS) then
+                    local locked, rem = computeLockState(entry.model)
+                    if locked and rem > 0 then
+                        entry.title.Text = "LOCKED"
+                        entry.title.TextColor3 = Color3.fromRGB(255, 80, 80)
+                        entry.timer.Text = mmss(rem)
+                    else
+                        entry.title.Text = "OPEN"
+                        entry.title.TextColor3 = Color3.fromRGB(120, 255, 120)
+                        entry.timer.Text = ""
+                    end
+                    entry.gui.Enabled = baseTimersVisible
+                end
+            end
+            task.wait(0.25)
+        end
+    end)
+
+    if lp.Character then
+        trySelectMyBaseOnce(lp.Character)
+    end
+    lp.CharacterAdded:Connect(trySelectMyBaseOnce)
+
+    --------------------------------------------------
     -- Ad Blocker (Hide / Delete)
     --------------------------------------------------
     local AD_SCAN_INTERVAL = 60
@@ -351,7 +588,7 @@ return function(C, R, UI)
     end
 
     --------------------------------------------------
-    -- UI: Player + Adblock
+    -- UI: Player + Adblock + Base Timers
     --------------------------------------------------
     VisualsTab:Section({
         Title = "Player Visuals",
@@ -405,6 +642,23 @@ return function(C, R, UI)
         end
     })
 
+    VisualsTab:Divider()
+
+    VisualsTab:Section({
+        Title = "Base Timers",
+        Icon  = "clock",
+    })
+
+    VisualsTab:Toggle({
+        Title    = "Base Timer Labels",
+        Value    = baseTimersVisible,
+        Callback = function(on)
+            baseTimersVisible = (on == true)
+            toggles.BaseTimers = baseTimersVisible
+            updateBaseBillboardVisibility()
+        end
+    })
+
     if toggles.PlayerTracker ~= false then
         startPlayerTracker()
     end
@@ -413,4 +667,7 @@ return function(C, R, UI)
         adScanOnce()
         ensureAdScanner()
     end
+
+    -- sync initial base timer visibility to saved state
+    updateBaseBillboardVisibility()
 end
