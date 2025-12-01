@@ -33,14 +33,35 @@ return function(C, R, UI)
     local charAddedConns       = {}
 
     local trackerFolder = WS:FindFirstChild(TRACKER_FOLDER_NAME)
-    if not trackerFolder then
-        trackerFolder = Instance.new("Folder")
-        trackerFolder.Name = TRACKER_FOLDER_NAME
-        trackerFolder.Parent = WS
+
+    local function ensureTrackerFolder()
+        if trackerFolder and trackerFolder.Parent then
+            return trackerFolder
+        end
+        trackerFolder = WS:FindFirstChild(TRACKER_FOLDER_NAME)
+        if not trackerFolder then
+            trackerFolder = Instance.new("Folder")
+            trackerFolder.Name = TRACKER_FOLDER_NAME
+            trackerFolder.Parent = WS
+        end
+        return trackerFolder
     end
+
+    ensureTrackerFolder()
 
     local trackers        = {}  -- [Player] = { model = Model, part = Part }
     local trackerStepConn = nil
+
+    local function destroyTracker(plr)
+        local t = trackers[plr]
+        if not t then return end
+        if t.model then
+            pcall(function()
+                t.model:Destroy()
+            end)
+        end
+        trackers[plr] = nil
+    end
 
     local function getOrCreateTracker(plr)
         if not plr or plr == lp then return nil end
@@ -50,9 +71,11 @@ return function(C, R, UI)
             return t
         end
 
+        local folder = ensureTrackerFolder()
+
         local model = Instance.new("Model")
         model.Name = "__PlayerTrackerModel__" .. (plr.UserId or plr.Name)
-        model.Parent = trackerFolder
+        model.Parent = folder
 
         local part = Instance.new("Part")
         part.Name = "HitboxPart"
@@ -67,17 +90,6 @@ return function(C, R, UI)
         t = { model = model, part = part }
         trackers[plr] = t
         return t
-    end
-
-    local function destroyTracker(plr)
-        local t = trackers[plr]
-        if not t then return end
-        if t.model then
-            pcall(function()
-                t.model:Destroy()
-            end)
-        end
-        trackers[plr] = nil
     end
 
     local function ensureHighlight(plr)
@@ -161,6 +173,8 @@ return function(C, R, UI)
         if runningPlayers then return end
         runningPlayers = true
 
+        ensureTrackerFolder()
+
         for _, plr in ipairs(Players:GetPlayers()) do
             trackPlayer(plr)
         end
@@ -209,21 +223,7 @@ return function(C, R, UI)
         end
 
         stopTrackerUpdate()
-
-        if trackerFolder then
-            pcall(function()
-                trackerFolder:Destroy()
-            end)
-        end
-
-        trackerFolder = nil
         trackers = {}
-        trackerFolder = WS:FindFirstChild(TRACKER_FOLDER_NAME)
-        if not trackerFolder then
-            trackerFolder = Instance.new("Folder")
-            trackerFolder.Name = TRACKER_FOLDER_NAME
-            trackerFolder.Parent = WS
-        end
     end
 
     --------------------------------------------------
@@ -233,7 +233,6 @@ return function(C, R, UI)
     local BASE_MODEL_PREFIX = "^PlayerBaseTemplate_"
     local BASE_LABEL_OFFSET = Vector3.new(0, 4.5, 0)
 
-    -- master visibility toggle (persistent)
     local baseTimersVisible = (toggles.BaseTimers == true)
 
     local function safeAttrs(inst)
@@ -668,6 +667,5 @@ return function(C, R, UI)
         ensureAdScanner()
     end
 
-    -- sync initial base timer visibility to saved state
     updateBaseBillboardVisibility()
 end
