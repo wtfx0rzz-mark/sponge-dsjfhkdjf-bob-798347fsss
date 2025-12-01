@@ -21,14 +21,14 @@ return function(C, R, UI)
         --------------------------------------------------------------------
         -- Shared / State
         --------------------------------------------------------------------
-        C.State         = C.State         or {}
-        C.State.Toggles = C.State.Toggles or {}
+        C.State             = C.State             or {}
+        C.State.Toggles     = C.State.Toggles     or {}
         C.State.NudgeConfig = C.State.NudgeConfig or {}
 
         local Toggles = C.State.Toggles
 
         --------------------------------------------------------------------
-        -- Auto-Slap Helper + Trap Blockers (from standalone script)
+        -- Auto-Slap Helper
         --------------------------------------------------------------------
         local AUTO_SWING  = (Toggles.AutoSlap ~= false)  -- default ON unless explicitly set false
         local SWING_DELAY = 0.00
@@ -252,7 +252,29 @@ return function(C, R, UI)
             end)
         end)
 
-        -- Trap blockers (Ketchup/Jelly traps)
+        --------------------------------------------------------------------
+        -- Trap blockers (Ketchup/Jelly traps) + toggle
+        --------------------------------------------------------------------
+        local trapAvoidOn  = (Toggles.TrapAvoid ~= false) -- default ON
+        local trapBlockers = {}                          -- { BasePart, ... }
+
+        local function registerTrapPart(part)
+            if not part then return end
+            trapBlockers[#trapBlockers+1] = part
+        end
+
+        local function applyTrapAvoidance()
+            for i = #trapBlockers, 1, -1 do
+                local p = trapBlockers[i]
+                if p and p.Parent then
+                    p.CanCollide = trapAvoidOn
+                else
+                    trapBlockers[i] = trapBlockers[#trapBlockers]
+                    trapBlockers[#trapBlockers] = nil
+                end
+            end
+        end
+
         local function makeTrapBlockerFor(trap)
             if not trap or not trap:IsDescendantOf(WS) then return end
             if trap:FindFirstChild("TrapBlocker", true) then return end
@@ -267,17 +289,18 @@ return function(C, R, UI)
             local block = Instance.new("Part")
             block.Name = "TrapBlocker"
             block.Anchored = true
-            block.CanCollide = true
+            block.CanCollide = trapAvoidOn
             block.CanTouch = false
             block.Transparency = 1
             block.Size = baseSize
             block.CFrame = hit.CFrame
             block.Parent = trap
+            registerTrapPart(block)
 
             local step = Instance.new("Part")
             step.Name = "TrapBlockerStep"
             step.Anchored = true
-            step.CanCollide = true
+            step.CanCollide = trapAvoidOn
             step.CanTouch = false
             step.Transparency = 1
 
@@ -288,6 +311,7 @@ return function(C, R, UI)
             step.Size = Vector3.new(stepSizeX, stepSizeY, stepSizeZ)
             step.CFrame = hit.CFrame * CFrame.new(0, (baseSize.Y + stepSizeY) / 2, 0)
             step.Parent = trap
+            registerTrapPart(step)
         end
 
         local function createTrapBlockers()
@@ -305,6 +329,7 @@ return function(C, R, UI)
         end
 
         createTrapBlockers()
+        applyTrapAvoidance()
 
         --------------------------------------------------------------------
         -- Existing helpers (Shockwave / Nudge / Fling)
@@ -741,7 +766,7 @@ return function(C, R, UI)
         local initialEdge = (Toggles.EdgeShockwave == true)
 
         --------------------------------------------------------------------
-        -- UI: Shockwave / Auto Nudge / Auto Slap / Fling
+        -- UI: Shockwave / Auto Nudge / Trap Avoid / Auto Slap / Fling
         --------------------------------------------------------------------
         tab:Section({ Title = "Shockwave Nudge", Icon = "zap" })
 
@@ -821,7 +846,24 @@ return function(C, R, UI)
             nudgeShockwave(r.Position, Nudge.Radius)
         end)
 
+        --------------------------------------------------------------------
+        -- Trap Avoidance toggle
+        --------------------------------------------------------------------
+        tab:Section({ Title = "Trap Protection" })
+
+        tab:Toggle({
+            Title = "Avoid Ketchup/Jelly Traps",
+            Value = trapAvoidOn,
+            Callback = function(v)
+                trapAvoidOn = (v == true)
+                Toggles.TrapAvoid = trapAvoidOn
+                applyTrapAvoidance()
+            end
+        })
+
+        --------------------------------------------------------------------
         -- Auto Slap toggle (replaces on-screen button)
+        --------------------------------------------------------------------
         tab:Section({ Title = "Slap Helper" })
 
         tab:Toggle({
@@ -834,7 +876,9 @@ return function(C, R, UI)
             end
         })
 
+        --------------------------------------------------------------------
         -- Fling UI wiring
+        --------------------------------------------------------------------
         tab:Section({ Title = "Fling Players" })
 
         tab:Slider({
