@@ -18,6 +18,297 @@ return function(C, R, UI)
         local tab  = Tabs.Actions or Tabs.Nudge or Tabs.Main
         if not tab then return end
 
+        --------------------------------------------------------------------
+        -- Shared / State
+        --------------------------------------------------------------------
+        C.State         = C.State         or {}
+        C.State.Toggles = C.State.Toggles or {}
+        C.State.NudgeConfig = C.State.NudgeConfig or {}
+
+        local Toggles = C.State.Toggles
+
+        --------------------------------------------------------------------
+        -- Auto-Slap Helper + Trap Blockers (from standalone script)
+        --------------------------------------------------------------------
+        local AUTO_SWING  = (Toggles.AutoSlap ~= false)  -- default ON unless explicitly set false
+        local SWING_DELAY = 0.00
+        local RAY_RANGE   = 24
+
+        local PLAYER_WHITELIST = {
+            daJasminat0r = true,
+        }
+
+        local function getContainers()
+            local ws          = WS
+            local charsFolder = ws:FindFirstChild("Characters")
+            local playersFold = ws:FindFirstChild("Players")
+
+            local char
+            if charsFolder then
+                char = charsFolder:FindFirstChild(lp.Name)
+            end
+            if not char then
+                char = lp.Character
+            end
+
+            local backpack
+            if playersFold then
+                local pModel = playersFold:FindFirstChild(lp.Name)
+                if pModel then
+                    backpack = pModel:FindFirstChild("Backpack")
+                end
+            end
+            if not backpack then
+                backpack = lp:FindFirstChild("Backpack")
+            end
+
+            return char, backpack
+        end
+
+        local function getRoot(inst)
+            if not inst then return nil end
+            if inst:IsA("BasePart") then
+                return inst
+            end
+            if inst:IsA("Model") then
+                return inst:FindFirstChild("HumanoidRootPart")
+                    or inst.PrimaryPart
+                    or inst:FindFirstChildWhichIsA("BasePart")
+            end
+            local part = inst:FindFirstChildWhichIsA("BasePart", true)
+            return part
+        end
+
+        local function equipTool(tool)
+            if not tool then return end
+            local char = select(1, getContainers())
+            if not char then return end
+            if tool.Parent ~= char then
+                local hum = char:FindFirstChildWhichIsA("Humanoid")
+                if hum then
+                    hum:EquipTool(tool)
+                else
+                    tool.Parent = char
+                end
+            end
+        end
+
+        local function findBestSlapTool()
+            local char, backpack = getContainers()
+            local candidates = {}
+
+            local function scan(container)
+                if not container then return end
+                for _, inst in ipairs(container:GetChildren()) do
+                    if inst:IsA("Tool") and inst.Name:find("SLAPtula") then
+                        table.insert(candidates, inst)
+                    end
+                end
+            end
+
+            scan(backpack)
+            scan(char)
+
+            local best, bestKB = nil, -math.huge
+            for _, tool in ipairs(candidates) do
+                local kb = tool:GetAttribute("KnockbackForce") or 0
+                if kb > bestKB then
+                    bestKB = kb
+                    best = tool
+                end
+            end
+
+            return best, bestKB
+        end
+
+        local function getSlapRemote(tool)
+            if not tool then return nil end
+            local comm = tool:FindFirstChild("SlapTool_Comm")
+            if not comm then return nil end
+            local rfFolder = comm:FindFirstChild("RF")
+            if not rfFolder then return nil end
+            local rf = rfFolder:FindFirstChild("Slap")
+            if rf and rf:IsA("RemoteFunction") then
+                return rf
+            end
+            return nil
+        end
+
+        local function getBestPlayerTarget()
+            local lpChar = select(1, getContainers())
+            local lpRoot = getRoot(lpChar)
+            if not lpRoot then return nil end
+
+            local bestPlayer, bestPos
+            local bestDist = math.huge
+
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= lp and not PLAYER_WHITELIST[plr.Name] then
+                    local targetChar
+                    local charsFolder = WS:FindFirstChild("Characters")
+                    if charsFolder then
+                        targetChar = charsFolder:FindFirstChild(plr.Name)
+                    end
+                    if not targetChar then
+                        targetChar = plr.Character
+                    end
+
+                    if targetChar then
+                        local root = getRoot(targetChar)
+                        if root then
+                            local dist = (root.Position - lpRoot.Position).Magnitude
+                            if dist <= RAY_RANGE and dist < bestDist then
+                                bestDist   = dist
+                                bestPlayer = plr
+                                bestPos    = root.Position
+                            end
+                        end
+                    end
+                end
+            end
+
+            return bestPlayer, bestPos
+        end
+
+        local function getBestObjectTarget()
+            local lpChar = select(1, getContainers())
+            local lpRoot = getRoot(lpChar)
+            if not lpRoot then return nil end
+
+            local bestPos
+            local bestDist = math.huge
+
+            local function consider(inst)
+                local root = getRoot(inst)
+                if not root then return end
+                local dist = (root.Position - lpRoot.Position).Magnitude
+                if dist <= RAY_RANGE and dist < bestDist then
+                    bestDist = dist
+                    bestPos  = root.Position
+                end
+            end
+
+            local hive = WS:FindFirstChild("JellyfishHive")
+            if hive then
+                consider(hive)
+            end
+
+            local sundaeRoot = WS:FindFirstChild("SundaeSentry")
+            if sundaeRoot then
+                consider(sundaeRoot)
+            end
+
+            for _, inst in ipairs(WS:GetDescendants()) do
+                local nameLower = string.lower(inst.Name)
+                if nameLower:find("turret") or nameLower:find("sentry") then
+                    consider(inst)
+                end
+            end
+
+            return bestPos
+        end
+
+        local lastSwing = 0
+
+        Run.Heartbeat:Connect(function()
+            if not AUTO_SWING then return end
+            if time() - lastSwing < SWING_DELAY then return end
+
+            local char = select(1, getContainers())
+            local lpRoot = getRoot(char)
+            if not char or not lpRoot then return end
+
+            local bestTool = select(1, findBestSlapTool())
+            if not bestTool then return end
+
+            equipTool(bestTool)
+
+            local remote = getSlapRemote(bestTool)
+            if not remote then return end
+
+            local remoteArg1
+            local targetPos
+
+            local playerTarget, playerPos = getBestPlayerTarget()
+            if playerTarget and playerPos then
+                remoteArg1 = playerTarget
+                targetPos  = playerPos
+            else
+                local objectPos = getBestObjectTarget()
+                if not objectPos then
+                    return
+                end
+                remoteArg1 = lp
+                targetPos  = objectPos
+            end
+
+            local dir = targetPos - lpRoot.Position
+            local unitDir = dir.Magnitude > 0 and dir.Unit or Vector3.new(0, 0, 0)
+
+            lastSwing = time()
+
+            pcall(function()
+                remote:InvokeServer(remoteArg1, unitDir)
+            end)
+        end)
+
+        -- Trap blockers (Ketchup/Jelly traps)
+        local function makeTrapBlockerFor(trap)
+            if not trap or not trap:IsDescendantOf(WS) then return end
+            if trap:FindFirstChild("TrapBlocker", true) then return end
+
+            local hit = trap:FindFirstChild("Hitbox", true) or getRoot(trap)
+            if not hit or not hit:IsA("BasePart") then return end
+
+            hit.CanCollide = false
+
+            local baseSize = hit.Size + Vector3.new(4, 2, 4)
+
+            local block = Instance.new("Part")
+            block.Name = "TrapBlocker"
+            block.Anchored = true
+            block.CanCollide = true
+            block.CanTouch = false
+            block.Transparency = 1
+            block.Size = baseSize
+            block.CFrame = hit.CFrame
+            block.Parent = trap
+
+            local step = Instance.new("Part")
+            step.Name = "TrapBlockerStep"
+            step.Anchored = true
+            step.CanCollide = true
+            step.CanTouch = false
+            step.Transparency = 1
+
+            local stepSizeX = math.max(1, baseSize.X - 2)
+            local stepSizeZ = math.max(1, baseSize.Z - 2)
+            local stepSizeY = math.max(1, baseSize.Y * 0.5)
+
+            step.Size = Vector3.new(stepSizeX, stepSizeY, stepSizeZ)
+            step.CFrame = hit.CFrame * CFrame.new(0, (baseSize.Y + stepSizeY) / 2, 0)
+            step.Parent = trap
+        end
+
+        local function createTrapBlockers()
+            for _, inst in ipairs(WS:GetDescendants()) do
+                if inst.Name == "KetchupTrap" or inst.Name == "JellyTrap" then
+                    makeTrapBlockerFor(inst)
+                end
+            end
+
+            WS.DescendantAdded:Connect(function(inst)
+                if inst.Name == "KetchupTrap" or inst.Name == "JellyTrap" then
+                    task.defer(makeTrapBlockerFor, inst)
+                end
+            end)
+        end
+
+        createTrapBlockers()
+
+        --------------------------------------------------------------------
+        -- Existing helpers (Shockwave / Nudge / Fling)
+        --------------------------------------------------------------------
         local function hrp(p)
             p = p or lp
             local ch = p.Character or p.CharacterAdded:Wait()
@@ -177,7 +468,7 @@ return function(C, R, UI)
             MaxPerFrame = 16,
         }
 
-        -- player fling state (same behavior as in troll.lua)
+        -- player fling state
         local flingEnabled     = false
         local flingPower       = 10000
         local flingLoopStarted = false
@@ -370,6 +661,9 @@ return function(C, R, UI)
             end
         end
 
+        --------------------------------------------------------------------
+        -- EdgeButtons container
+        --------------------------------------------------------------------
         local playerGui = lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui")
         local edgeGui   = playerGui:FindFirstChild("EdgeButtons")
 
@@ -403,6 +697,9 @@ return function(C, R, UI)
             list.Parent = stack
         end
 
+        --------------------------------------------------------------------
+        -- Shockwave edge button
+        --------------------------------------------------------------------
         local shockBtn = stack:FindFirstChild("ShockwaveEdge")
         if not shockBtn then
             shockBtn = Instance.new("TextButton")
@@ -434,16 +731,18 @@ return function(C, R, UI)
             end
         end)
 
-        C.State              = C.State              or {}
-        C.State.Toggles      = C.State.Toggles      or {}
-        C.State.NudgeConfig  = C.State.NudgeConfig  or {}
-
-        if C.State.NudgeConfig.Dist  then Nudge.Dist  = C.State.NudgeConfig.Dist end
-        if C.State.NudgeConfig.Up    then Nudge.Up    = C.State.NudgeConfig.Up   end
+        --------------------------------------------------------------------
+        -- Restore Nudge config from state
+        --------------------------------------------------------------------
+        if C.State.NudgeConfig.Dist   then Nudge.Dist   = C.State.NudgeConfig.Dist   end
+        if C.State.NudgeConfig.Up     then Nudge.Up     = C.State.NudgeConfig.Up     end
         if C.State.NudgeConfig.Radius then Nudge.Radius = C.State.NudgeConfig.Radius end
 
-        local initialEdge = (C.State.Toggles.EdgeShockwave == true)
+        local initialEdge = (Toggles.EdgeShockwave == true)
 
+        --------------------------------------------------------------------
+        -- UI: Shockwave / Auto Nudge / Auto Slap / Fling
+        --------------------------------------------------------------------
         tab:Section({ Title = "Shockwave Nudge", Icon = "zap" })
 
         tab:Toggle({
@@ -451,7 +750,7 @@ return function(C, R, UI)
             Value = initialEdge,
             Callback = function(v)
                 local on = (v == true)
-                C.State.Toggles.EdgeShockwave = on
+                Toggles.EdgeShockwave = on
                 if shockBtn then
                     shockBtn.Visible = on
                 end
@@ -502,6 +801,7 @@ return function(C, R, UI)
             end
         })
 
+        -- Auto Nudge Heartbeat
         local autoConn
         local acc = 0
 
@@ -521,23 +821,20 @@ return function(C, R, UI)
             nudgeShockwave(r.Position, Nudge.Radius)
         end)
 
-        Players.LocalPlayer.CharacterAdded:Connect(function()
-            local pg = lp:WaitForChild("PlayerGui")
-            local eg = pg:FindFirstChild("EdgeButtons")
-            if eg and eg.Parent ~= pg then
-                eg.Parent = pg
-            end
-            local on = (C.State and C.State.Toggles and C.State.Toggles.EdgeShockwave == true) or false
-            if shockBtn then
-                shockBtn.Visible = on
-            end
-        end)
+        -- Auto Slap toggle (replaces on-screen button)
+        tab:Section({ Title = "Slap Helper" })
 
-        if shockBtn then
-            shockBtn.Visible = initialEdge
-        end
+        tab:Toggle({
+            Title = "Auto Slap",
+            Value = AUTO_SWING,
+            Callback = function(v)
+                AUTO_SWING = (v == true)
+                C.State.Toggles.AutoSlap = AUTO_SWING
+                lastSwing = 0
+            end
+        })
 
-        -- fling UI wiring (same semantics as in troll.lua)
+        -- Fling UI wiring
         tab:Section({ Title = "Fling Players" })
 
         tab:Slider({
@@ -561,6 +858,25 @@ return function(C, R, UI)
                 end
             end
         })
+
+        --------------------------------------------------------------------
+        -- CharacterAdded: keep EdgeButtons + Shockwave visibility
+        --------------------------------------------------------------------
+        Players.LocalPlayer.CharacterAdded:Connect(function()
+            local pg = lp:WaitForChild("PlayerGui")
+            local eg = pg:FindFirstChild("EdgeButtons")
+            if eg and eg.Parent ~= pg then
+                eg.Parent = pg
+            end
+            local on = (C.State and C.State.Toggles and C.State.Toggles.EdgeShockwave == true) or false
+            if shockBtn then
+                shockBtn.Visible = on
+            end
+        end)
+
+        if shockBtn then
+            shockBtn.Visible = initialEdge
+        end
     end
 
     local ok, err = pcall(run)
