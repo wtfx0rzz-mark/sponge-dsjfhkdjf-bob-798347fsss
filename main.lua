@@ -9,7 +9,7 @@ end
 -- Load UI module
 local UI = (function()
     local ok, ret = pcall(function()
-        return loadstring(httpget("https://raw.githubusercontent.com/wtfx0rzz-mark/universal-tjhredhytjerwgfgh/main/ui.lua"))()
+        return loadstring(httpget("https://raw.githubusercontent.com/wtfx0rzz-mark/sponge-dsjfhkdjf-bob-798347fsss/main/ui.lua"))()
     end)
 
     if ok and type(ret) == "table" then
@@ -48,9 +48,9 @@ end
 
 -- Modules to load
 local paths = {
-    Player  = "https://raw.githubusercontent.com/wtfx0rzz-mark/universal-tjhredhytjerwgfgh/main/player.lua",
-    Actions = "https://raw.githubusercontent.com/wtfx0rzz-mark/universal-tjhredhytjerwgfgh/main/actions.lua",
-    Visuals = "https://raw.githubusercontent.com/wtfx0rzz-mark/universal-tjhredhytjerwgfgh/main/visuals.lua",
+    Player  = "https://raw.githubusercontent.com/wtfx0rzz-mark/sponge-dsjfhkdjf-bob-798347fsss/main/player.lua",
+    Actions = "https://raw.githubusercontent.com/wtfx0rzz-mark/sponge-dsjfhkdjf-bob-798347fsss/main/actions.lua",
+    Visuals = "https://raw.githubusercontent.com/wtfx0rzz-mark/sponge-dsjfhkdjf-bob-798347fsss/main/visuals.lua",
 }
 
 for name, url in pairs(paths) do
