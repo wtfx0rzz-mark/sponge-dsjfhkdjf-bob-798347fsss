@@ -22,43 +22,116 @@ return function(C, R, UI)
     local toggles   = C.State.Toggles
 
     --------------------------------------------------
-    -- Player Highlighter
+    -- Player Highlighter (works even if invisible)
     --------------------------------------------------
-    local PLAYER_HL_NAME = "__PlayerTrackerHL__"
+    local PLAYER_HL_NAME       = "__PlayerTrackerHL__"
+    local TRACKER_FOLDER_NAME  = "__PlayerTrackerModels__"
 
     local runningPlayers       = false
     local playerAddedConn      = nil
     local playerRemovingConn   = nil
     local charAddedConns       = {}
 
-    local function ensureHighlight(character)
-        if not character then return nil end
-        local hl = character:FindFirstChild(PLAYER_HL_NAME)
+    local trackerFolder = WS:FindFirstChild(TRACKER_FOLDER_NAME)
+    if not trackerFolder then
+        trackerFolder = Instance.new("Folder")
+        trackerFolder.Name = TRACKER_FOLDER_NAME
+        trackerFolder.Parent = WS
+    end
+
+    local trackers        = {}  -- [Player] = { model = Model, part = Part }
+    local trackerStepConn = nil
+
+    local function getOrCreateTracker(plr)
+        if not plr or plr == lp then return nil end
+
+        local t = trackers[plr]
+        if t and t.model and t.model.Parent then
+            return t
+        end
+
+        local model = Instance.new("Model")
+        model.Name = "__PlayerTrackerModel__" .. (plr.UserId or plr.Name)
+        model.Parent = trackerFolder
+
+        local part = Instance.new("Part")
+        part.Name = "HitboxPart"
+        part.Anchored = true
+        part.CanCollide = false
+        part.CanTouch = false
+        part.CanQuery = false
+        part.Transparency = 1
+        part.Size = Vector3.new(4, 6, 4)
+        part.Parent = model
+
+        t = { model = model, part = part }
+        trackers[plr] = t
+        return t
+    end
+
+    local function destroyTracker(plr)
+        local t = trackers[plr]
+        if not t then return end
+        if t.model then
+            pcall(function()
+                t.model:Destroy()
+            end)
+        end
+        trackers[plr] = nil
+    end
+
+    local function ensureHighlight(plr)
+        if not plr or plr == lp then return nil end
+
+        local t = getOrCreateTracker(plr)
+        if not t or not t.part then return nil end
+
+        local container = t.model
+        local hl = container:FindFirstChild(PLAYER_HL_NAME)
         if not hl or not hl:IsA("Highlight") then
             hl = Instance.new("Highlight")
             hl.Name = PLAYER_HL_NAME
-            hl.Adornee = character
-            hl.FillTransparency    = 1       -- outline only
+            hl.Adornee = t.part
+            hl.FillTransparency    = 1
             hl.OutlineTransparency = 0
             hl.OutlineColor        = Color3.fromRGB(255, 255, 0)
             hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-            hl.Parent              = character
+            hl.Parent              = container
         end
         hl.Enabled = true
         return hl
     end
 
-    local function clearHighlight(character)
-        if not character then return end
-        local hl = character:FindFirstChild(PLAYER_HL_NAME)
-        if hl and hl:IsA("Highlight") then
-            hl:Destroy()
+    local function clearHighlight(plr)
+        destroyTracker(plr)
+    end
+
+    local function ensureTrackerUpdate()
+        if trackerStepConn then return end
+        trackerStepConn = Run.Heartbeat:Connect(function()
+            for plr, t in pairs(trackers) do
+                local ch = plr.Character
+                if ch and ch.Parent and t.part and t.part.Parent then
+                    local ok, cf, size = pcall(ch.GetBoundingBox, ch)
+                    if ok and cf and size then
+                        t.part.CFrame = cf
+                        t.part.Size   = size + Vector3.new(0.25, 0.25, 0.25)
+                    end
+                end
+            end
+        end)
+    end
+
+    local function stopTrackerUpdate()
+        if trackerStepConn then
+            trackerStepConn:Disconnect()
+            trackerStepConn = nil
         end
     end
 
     local function attachToCharacter(plr, character)
         if not character or plr == lp then return end
-        ensureHighlight(character)
+        ensureHighlight(plr)
     end
 
     local function trackPlayer(plr)
@@ -81,9 +154,7 @@ return function(C, R, UI)
             charAddedConns[plr]:Disconnect()
             charAddedConns[plr] = nil
         end
-        if plr.Character then
-            clearHighlight(plr.Character)
-        end
+        clearHighlight(plr)
     end
 
     local function startPlayerTracker()
@@ -109,6 +180,8 @@ return function(C, R, UI)
         playerRemovingConn = Players.PlayerRemoving:Connect(function(plr)
             untrackPlayer(plr)
         end)
+
+        ensureTrackerUpdate()
     end
 
     local function stopPlayerTracker()
@@ -130,9 +203,26 @@ return function(C, R, UI)
         end
 
         for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= lp and plr.Character then
-                clearHighlight(plr.Character)
+            if plr ~= lp then
+                clearHighlight(plr)
             end
+        end
+
+        stopTrackerUpdate()
+
+        if trackerFolder then
+            pcall(function()
+                trackerFolder:Destroy()
+            end)
+        end
+
+        trackerFolder = nil
+        trackers = {}
+        trackerFolder = WS:FindFirstChild(TRACKER_FOLDER_NAME)
+        if not trackerFolder then
+            trackerFolder = Instance.new("Folder")
+            trackerFolder.Name = TRACKER_FOLDER_NAME
+            trackerFolder.Parent = WS
         end
     end
 
@@ -152,12 +242,10 @@ return function(C, R, UI)
         if not inst or not inst.Name then return false end
         local name = string.lower(inst.Name)
 
-        -- Names seen in screenshots: AdPortal, AdGui, AdGuiAdornee, etc.
         if name:find("adportal", 1, true) then return true end
         if name:find("adguiadornee", 1, true) then return true end
         if name:find("adgui", 1, true) then return true end
 
-        -- Product GUI with DevProductId attribute
         if inst:GetAttribute("DevProductId") ~= nil then
             return true
         end
@@ -173,7 +261,6 @@ return function(C, R, UI)
             last = root
             root = root.Parent
         end
-        -- Prefer immediate child of Workspace (e.g. "Ad", "Buttons")
         if root.Parent == WS then
             return root
         end
@@ -194,11 +281,7 @@ return function(C, R, UI)
                 end)
             elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") or obj:IsA("ScreenGui") then
                 pcall(function()
-                    if obj:IsA("BillboardGui") then
-                        obj.Enabled = false
-                    else
-                        obj.Enabled = false
-                    end
+                    obj.Enabled = false
                 end)
             elseif obj:IsA("GuiObject") then
                 pcall(function()
@@ -298,7 +381,7 @@ return function(C, R, UI)
 
     VisualsTab:Toggle({
         Title    = "Adblock: Hide Ads (local)",
-        Value    = (toggles.AdblockHide == true), -- default OFF
+        Value    = (toggles.AdblockHide == true),
         Callback = function(on)
             adHideOn = (on == true)
             toggles.AdblockHide = adHideOn
@@ -311,7 +394,7 @@ return function(C, R, UI)
 
     VisualsTab:Toggle({
         Title    = "Adblock: Delete Ads",
-        Value    = (toggles.AdblockDelete == true), -- default OFF
+        Value    = (toggles.AdblockDelete == true),
         Callback = function(on)
             adDeleteOn = (on == true)
             toggles.AdblockDelete = adDeleteOn
@@ -322,12 +405,10 @@ return function(C, R, UI)
         end
     })
 
-    -- Auto-enable player tracker if previously on or unset
     if toggles.PlayerTracker ~= false then
         startPlayerTracker()
     end
 
-    -- If user previously enabled adblock, resume it
     if adHideOn or adDeleteOn then
         adScanOnce()
         ensureAdScanner()
