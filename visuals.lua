@@ -118,16 +118,68 @@ return function(C, R, UI)
         destroyTracker(plr)
     end
 
+    -- bounds / hitbox helpers so invisible players still get a visible box
+    local function findHitboxPart(char)
+        if not char then return nil end
+
+        local candidates = {
+            "Hitbox", "HitBox", "HitboxPart", "HitBoxPart",
+            "HumanoidRootPart", "UpperTorso", "LowerTorso", "Torso"
+        }
+
+        for _, name in ipairs(candidates) do
+            local part = char:FindFirstChild(name, true)
+            if part and part:IsA("BasePart") then
+                return part
+            end
+        end
+
+        local ok, desc = pcall(char.GetDescendants, char)
+        if ok then
+            for _, d in ipairs(desc) do
+                if d:IsA("BasePart") then
+                    return d
+                end
+            end
+        end
+
+        return nil
+    end
+
+    local function getCharBounds(char)
+        if not char then return nil, nil end
+
+        local pad = Vector3.new(0.25, 0.25, 0.25)
+
+        local ok, cf, size = pcall(char.GetBoundingBox, char)
+        if ok and cf and size then
+            if size.X > 1 and size.Y > 2 and size.Z > 1 then
+                return cf, size + pad
+            end
+        end
+
+        local hb = findHitboxPart(char)
+        if hb then
+            local s = hb.Size
+            local sx = math.max(s.X, 2)
+            local sy = math.max(s.Y, 4)
+            local sz = math.max(s.Z, 2)
+            return hb.CFrame, Vector3.new(sx, sy, sz) + pad
+        end
+
+        return nil, nil
+    end
+
     local function ensureTrackerUpdate()
         if trackerStepConn then return end
         trackerStepConn = Run.Heartbeat:Connect(function()
             for plr, t in pairs(trackers) do
                 local ch = plr.Character
                 if ch and ch.Parent and t.part and t.part.Parent then
-                    local ok, cf, size = pcall(ch.GetBoundingBox, ch)
-                    if ok and cf and size then
+                    local cf, size = getCharBounds(ch)
+                    if cf and size then
                         t.part.CFrame = cf
-                        t.part.Size   = size + Vector3.new(0.25, 0.25, 0.25)
+                        t.part.Size   = size
                     end
                 end
             end
@@ -299,6 +351,7 @@ return function(C, R, UI)
         gui.Size = UDim2.fromOffset(160, 40)
         gui.MaxDistance = 1e9
         gui.StudsOffsetWorldSpace = BASE_LABEL_OFFSET
+        gui.ResetOnSpawn = false
         gui.Parent = lp:WaitForChild("PlayerGui")
         gui.Enabled = baseTimersVisible
 
@@ -493,7 +546,7 @@ return function(C, R, UI)
         if not inst then return nil end
         local root = inst
         local last = inst
-        while root.Parent and root.Parent ~= WS do
+        while root.Parent and root.Parent ~= WS then
             last = root
             root = root.Parent
         end
